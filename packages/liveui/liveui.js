@@ -2,7 +2,7 @@ Meteor.ui = Meteor.ui || {};
 
 (function() {
 
-  var walkRanges = function(frag, originalHtml) {
+  var walkRanges = function(frag, originalHtml, idToChunk) {
     // Helper that invokes `f` on every comment node under `parent`.
     // If `f` returns a node, visit that node next.
     var each_comment = function(parent, f) {
@@ -19,7 +19,7 @@ Meteor.ui = Meteor.ui || {};
 
     // walk comments and create ranges
     var rangeStartNodes = {};
-    var rangesCreated = []; // [[range, id], ...]
+    var chunksToWireUp = [];
     each_comment(frag, function(n) {
 
       var rangeCommentMatch = /^\s*(START|END)RANGE_(\S+)/.exec(n.nodeValue);
@@ -95,14 +95,60 @@ Meteor.ui = Meteor.ui || {};
       }
 
       var range = new Meteor.ui._LiveRange(Meteor.ui._tag, startNode, endNode);
-      rangesCreated.push([range, id]);
+      var chunk = idToChunk[id];
+      if (chunk) {
+        chunk.range = range;
+        chunksToWireUp.push(chunk);
+      }
 
       return next;
     });
 
-    return rangesCreated;
+    return chunksToWireUp;
   };
 
+  var render = function(chunk) {
+    var html_func = chunk.html_func;
+    var react_data = chunk.react_data;
+
+    var idToChunk = {};
+    Meteor.ui._render_mode = {
+      nextId: 1,
+      idToChunk: idToChunk
+    };
+
+    var html;
+    try {
+      html = chunk.calculate();
+    } finally {
+      Meteor.ui._render_mode = null;
+    }
+
+    var frag = Meteor.ui._htmlToFragment(html);
+    if (! frag.firstChild)
+      frag.appendChild(document.createComment("empty"));
+
+
+    var chunksToWireUp = walkRanges(frag, html, idToChunk);
+
+    var range = chunk.range;
+    if (range) {
+      // update chunk in place.
+      Meteor.ui._intelligent_replace(range, frag);
+      frag = null;
+    } else {
+      chunk.range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
+    }
+
+    chunk.wireUp();
+
+    // Call "added to DOM" callbacks to wire up all sub-chunks.
+    _.each(chunksToWireUp, function(c) {
+      c.wireUp();
+    });
+
+    return frag;
+  };
 
   // In render mode (i.e. inside Meteor.ui.render), this is an
   // object, otherwise it is null.
@@ -117,12 +163,13 @@ Meteor.ui = Meteor.ui || {};
       throw new Error("Can't nest Meteor.ui.render.");
 
     var c = new Chunk(html_func, react_data);
-    if (xxx_in_range)
+    if (xxx_in_range) {
       c.range = xxx_in_range;
-    c.render();
+      render(c);
+      return null;
+    }
 
-    var frag = c.range.containerNode();
-    return frag;
+    return render(c);
   };
 
   Meteor.ui.chunk = function(html_func, react_data) {
@@ -372,48 +419,7 @@ Meteor.ui = Meteor.ui || {};
     return html;
   };
 
-  Chunk.prototype.render = function() {
-    var self = this;
-
-    var html_func = self.html_func;
-    var react_data = self.react_data;
-
-    Meteor.ui._render_mode = {callbacks: {_count: 0}};
-    var html, rangeCallbacks;
-    try {
-      html = self.calculate();
-    } finally {
-      rangeCallbacks = Meteor.ui._render_mode.callbacks;
-      Meteor.ui._render_mode = null;
-    }
-
-    var frag = Meteor.ui._htmlToFragment(html);
-    if (! frag.firstChild)
-      frag.appendChild(document.createComment("empty"));
-
-
-    var rangesCreated = walkRanges(frag, html);
-
-    var range = self.range;
-    if (range) {
-      // update chunk in place.
-      Meteor.ui._intelligent_replace(range, frag);
-    } else {
-      self.range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
-    }
-
-    self.wireUp();
-
-    // Call "added to DOM" callbacks to wire up all sub-chunks.
-    _.each(rangesCreated, function(x) {
-      var range = x[0];
-      var id = x[1];
-      if (rangeCallbacks[id])
-        rangeCallbacks[id](range);
-    });
-
-  };
-
+  // called when we get a range, or contents are replaced
   Chunk.prototype.wireUp = function() {
     var self = this;
 
@@ -442,7 +448,7 @@ Meteor.ui = Meteor.ui || {};
         return;
 
       self.context = null;
-      self.render();
+      render(self);
     });
   };
 
@@ -572,10 +578,18 @@ Meteor.ui = Meteor.ui || {};
     if (! Meteor.ui._render_mode)
       return html;
 
-    var callbacks = Meteor.ui._render_mode.callbacks;
+    var idToChunk = Meteor.ui._render_mode.idToChunk;
+    var commentId = Meteor.ui._render_mode.nextId ++;
 
-    var commentId = ++callbacks._count;
-    callbacks[commentId] = callback;
+    // XXX
+    if (callback) {
+      idToChunk[commentId] = {
+        wireUp: function() {
+          callback(this.range);
+        }
+      };
+    }
+
     return "<!-- STARTRANGE_"+commentId+" -->" + html +
       "<!-- ENDRANGE_"+commentId+" -->";
   };
