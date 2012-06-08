@@ -109,79 +109,31 @@ Meteor.ui = Meteor.ui || {};
   // callbacks: id -> func, where id ranges from 1 to callbacks._count.
   Meteor.ui._render_mode = null;
 
-  // `in_range` is a package-private argument used to render inside
-  // an existing LiveRange on an update.
-  Meteor.ui.render = function (html_func, react_data, in_range) {
+  Meteor.ui.render = function (html_func, react_data, xxx_in_range) {
     if (typeof html_func !== "function")
       throw new Error("Meteor.ui.render() requires a function as its first argument.");
 
     if (Meteor.ui._render_mode)
       throw new Error("Can't nest Meteor.ui.render.");
 
-    var cx = new Meteor.deps.Context;
-
-    Meteor.ui._render_mode = {callbacks: {_count: 0}};
-    var html, rangeCallbacks;
-    try {
-      html = cx.run(html_func); // run the caller's html_func
-    } finally {
-      rangeCallbacks = Meteor.ui._render_mode.callbacks;
-      Meteor.ui._render_mode = null;
-    }
-
-    if (typeof html !== "string")
-      throw new Error("Render function must return a string");
-
-    var frag = Meteor.ui._htmlToFragment(html);
-    if (! frag.firstChild)
-      frag.appendChild(document.createComment("empty"));
-
-
-    var rangesCreated = walkRanges(frag, html);
-
-    var range;
-    if (in_range) {
-      // Called to re-render a chunk; update that chunk in place.
-      Meteor.ui._intelligent_replace(in_range, frag);
-      range = in_range;
-    } else {
-      range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
-    }
-
     var c = new Chunk(html_func, react_data);
-    c.range = range;
-    c.context = cx;
+    if (xxx_in_range)
+      c.range = xxx_in_range;
+    c.render();
 
-    c.wireUp();
-
-    // Call "added to DOM" callbacks to wire up all sub-chunks.
-    _.each(rangesCreated, function(x) {
-      var range = x[0];
-      var id = x[1];
-      if (rangeCallbacks[id])
-        rangeCallbacks[id](range);
-    });
-
-    return (in_range ? null : frag);
-
+    var frag = c.range.containerNode();
+    return frag;
   };
 
   Meteor.ui.chunk = function(html_func, react_data) {
     if (typeof html_func !== "function")
       throw new Error("Meteor.ui.chunk() requires a function as its first argument.");
 
-    if (! Meteor.ui._render_mode) {
+    if (! Meteor.ui._render_mode)
       return html_func();
-    }
-
-    var cx = new Meteor.deps.Context;
-    var html = cx.run(html_func);
-
-    if (typeof html !== "string")
-      throw new Error("Render function must return a string");
 
     var c = new Chunk(html_func, react_data);
-    c.context = cx;
+    var html = c.calculate();
 
     return Meteor.ui._ranged_html(html, function(range) {
       c.range = range;
@@ -412,7 +364,54 @@ Meteor.ui = Meteor.ui || {};
   };
 
   Chunk.prototype.calculate = function() {
-    ////////
+    var cx = new Meteor.deps.Context;
+    this.context = cx;
+    var html = cx.run(this.html_func);
+    if (typeof html !== "string")
+      throw new Error("Render function must return a string");
+    return html;
+  };
+
+  Chunk.prototype.render = function() {
+    var self = this;
+
+    var html_func = self.html_func;
+    var react_data = self.react_data;
+
+    Meteor.ui._render_mode = {callbacks: {_count: 0}};
+    var html, rangeCallbacks;
+    try {
+      html = self.calculate();
+    } finally {
+      rangeCallbacks = Meteor.ui._render_mode.callbacks;
+      Meteor.ui._render_mode = null;
+    }
+
+    var frag = Meteor.ui._htmlToFragment(html);
+    if (! frag.firstChild)
+      frag.appendChild(document.createComment("empty"));
+
+
+    var rangesCreated = walkRanges(frag, html);
+
+    var range = self.range;
+    if (range) {
+      // update chunk in place.
+      Meteor.ui._intelligent_replace(range, frag);
+    } else {
+      self.range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
+    }
+
+    self.wireUp();
+
+    // Call "added to DOM" callbacks to wire up all sub-chunks.
+    _.each(rangesCreated, function(x) {
+      var range = x[0];
+      var id = x[1];
+      if (rangeCallbacks[id])
+        rangeCallbacks[id](range);
+    });
+
   };
 
   Chunk.prototype.wireUp = function() {
@@ -442,7 +441,8 @@ Meteor.ui = Meteor.ui || {};
       if (_checkOffscreen(range))
         return;
 
-      Meteor.ui.render(self.html_func, self.react_data, range);
+      self.context = null;
+      self.render();
     });
   };
 
