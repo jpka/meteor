@@ -2,39 +2,7 @@ Meteor.ui = Meteor.ui || {};
 
 (function() {
 
-  // In render mode (i.e. inside Meteor.ui.render), this is an
-  // object, otherwise it is null.
-  // callbacks: id -> func, where id ranges from 1 to callbacks._count.
-  Meteor.ui._render_mode = null;
-
-  // `in_range` is a package-private argument used to render inside
-  // an existing LiveRange on an update.
-  Meteor.ui.render = function (html_func, react_data, in_range) {
-    if (typeof html_func !== "function")
-      throw new Error("Meteor.ui.render() requires a function as its first argument.");
-
-    if (Meteor.ui._render_mode)
-      throw new Error("Can't nest Meteor.ui.render.");
-
-    var cx = new Meteor.deps.Context;
-
-    Meteor.ui._render_mode = {callbacks: {_count: 0}};
-    var html, rangeCallbacks;
-    try {
-      html = cx.run(html_func); // run the caller's html_func
-    } finally {
-      rangeCallbacks = Meteor.ui._render_mode.callbacks;
-      Meteor.ui._render_mode = null;
-    }
-
-    if (typeof html !== "string")
-      throw new Error("Render function must return a string");
-
-    var frag = Meteor.ui._htmlToFragment(html);
-    if (! frag.firstChild)
-      frag.appendChild(document.createComment("empty"));
-
-
+  var walkRanges = function(frag, originalHtml) {
     // Helper that invokes `f` on every comment node under `parent`.
     // If `f` returns a node, visit that node next.
     var each_comment = function(parent, f) {
@@ -105,6 +73,7 @@ Meteor.ui = Meteor.ui || {};
                    endNode === startNode.parentNode.nextSibling) {
           endNode = startNode.parentNode.lastChild;
         } else {
+          var html = originalHtml;
           var r = new RegExp('<!--\\s*STARTRANGE_'+id+'.*?-->', 'g');
           var match = r.exec(html);
           var help = "";
@@ -131,6 +100,44 @@ Meteor.ui = Meteor.ui || {};
       return next;
     });
 
+    return rangesCreated;
+  };
+
+
+  // In render mode (i.e. inside Meteor.ui.render), this is an
+  // object, otherwise it is null.
+  // callbacks: id -> func, where id ranges from 1 to callbacks._count.
+  Meteor.ui._render_mode = null;
+
+  // `in_range` is a package-private argument used to render inside
+  // an existing LiveRange on an update.
+  Meteor.ui.render = function (html_func, react_data, in_range) {
+    if (typeof html_func !== "function")
+      throw new Error("Meteor.ui.render() requires a function as its first argument.");
+
+    if (Meteor.ui._render_mode)
+      throw new Error("Can't nest Meteor.ui.render.");
+
+    var cx = new Meteor.deps.Context;
+
+    Meteor.ui._render_mode = {callbacks: {_count: 0}};
+    var html, rangeCallbacks;
+    try {
+      html = cx.run(html_func); // run the caller's html_func
+    } finally {
+      rangeCallbacks = Meteor.ui._render_mode.callbacks;
+      Meteor.ui._render_mode = null;
+    }
+
+    if (typeof html !== "string")
+      throw new Error("Render function must return a string");
+
+    var frag = Meteor.ui._htmlToFragment(html);
+    if (! frag.firstChild)
+      frag.appendChild(document.createComment("empty"));
+
+
+    var rangesCreated = walkRanges(frag, html);
 
     var range;
     if (in_range) {
@@ -141,6 +148,12 @@ Meteor.ui = Meteor.ui || {};
       range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
     }
 
+    var c = new Chunk(html_func, react_data);
+    c.range = range;
+    c.context = cx;
+
+    c.wireUp();
+
     // Call "added to DOM" callbacks to wire up all sub-chunks.
     _.each(rangesCreated, function(x) {
       var range = x[0];
@@ -148,8 +161,6 @@ Meteor.ui = Meteor.ui || {};
       if (rangeCallbacks[id])
         rangeCallbacks[id](range);
     });
-
-    Meteor.ui._wire_up(cx, range, html_func, react_data);
 
     return (in_range ? null : frag);
 
@@ -169,11 +180,18 @@ Meteor.ui = Meteor.ui || {};
     if (typeof html !== "string")
       throw new Error("Render function must return a string");
 
+    var c = new Chunk(html_func, react_data);
+    c.context = cx;
+
     return Meteor.ui._ranged_html(html, function(range) {
-      Meteor.ui._wire_up(cx, range, html_func, react_data);
+      c.range = range;
+      c.wireUp();
     });
   };
 
+//  var chunkInternal = function(html_func, react_data) {
+//
+//  };
 
   Meteor.ui.listChunk = function (observable, doc_func, else_func, react_data) {
     if (arguments.length === 3 && typeof else_func === "object") {
@@ -388,9 +406,22 @@ Meteor.ui = Meteor.ui || {};
     attach_secondary_events(tgtRange);
   };
 
-  Meteor.ui._wire_up = function(cx, range, html_func, react_data) {
+  var Chunk = function(html_func, react_data) {
+    this.html_func = html_func;
+    this.react_data = react_data;
+  };
+
+  Chunk.prototype.calculate = function() {
+    ////////
+  };
+
+  Chunk.prototype.wireUp = function() {
+    var self = this;
+
+    var range = self.range;
+
     // wire events
-    var data = react_data || {};
+    var data = self.react_data || {};
     if (data.events)
       range.event_handlers = unpackEventMap(data.events);
     if (data.event_data)
@@ -402,16 +433,16 @@ Meteor.ui = Meteor.ui || {};
     // we are to kill the context (mark it killed and invalidate it).
     // Kill old context from previous update.
     killContext(range);
-    range.context = cx;
+    range.context = self.context;
 
     // wire update
-    cx.on_invalidate(function(old_cx) {
+    self.context.on_invalidate(function(old_cx) {
       if (old_cx.killed)
         return; // context was invalidated as part of killing it
       if (_checkOffscreen(range))
         return;
 
-      Meteor.ui.render(html_func, react_data, range);
+      Meteor.ui.render(self.html_func, self.react_data, range);
     });
   };
 
