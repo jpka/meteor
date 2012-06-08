@@ -151,9 +151,7 @@ Meteor.ui = Meteor.ui || {};
   };
 
   var calculate = function(chunk) {
-    var cx = new Meteor.deps.Context;
-    chunk.context = cx;
-    var html = cx.run(chunk.html_func);
+    var html = chunk.context.run(chunk.html_func);
     if (typeof html !== "string")
       throw new Error("Render function must return a string");
     return html;
@@ -252,6 +250,10 @@ Meteor.ui = Meteor.ui || {};
 
 
   var killContext = function(range) {
+    if (range.chunk) {
+      range.chunk.kill();
+      return;
+    }
     var cx = range.context;
     if (cx && ! cx.killed) {
       cx.killed = true;
@@ -412,8 +414,42 @@ Meteor.ui = Meteor.ui || {};
   };
 
   var Chunk = function(html_func, react_data) {
-    this.html_func = html_func;
-    this.react_data = react_data;
+    var self = this;
+    self.html_func = html_func;
+    self.react_data = react_data;
+
+    // Meteor.deps integration.
+    // When self.context is invalidated, recreate it
+    // and call self.onsignal().
+    var signaled = function() {
+      if (! self.killed) {
+        self.context = new Meteor.deps.Context;
+        self.context.on_invalidate(signaled);
+        self.onsignal();
+      }
+    };
+    self.context = new Meteor.deps.Context;
+    self.context.on_invalidate(signaled);
+  };
+
+  Chunk.prototype.kill = function() {
+    if (! this.killed) {
+      this.killed = true;
+      this.signal();
+    }
+  };
+
+  Chunk.prototype.signal = function() {
+    this.context.invalidate();
+  };
+
+  Chunk.prototype.onsignal = function() {
+    if (_checkOffscreen(this.range)) {
+      this.kill();
+      return;
+    }
+
+    render(this);
   };
 
   // called when we get a range, or contents are replaced
@@ -434,19 +470,9 @@ Meteor.ui = Meteor.ui || {};
     // record that if we see this range offscreen during a flush,
     // we are to kill the context (mark it killed and invalidate it).
     // Kill old context from previous update.
-    killContext(range);
-    range.context = self.context;
-
-    // wire update
-    self.context.on_invalidate(function(old_cx) {
-      if (old_cx.killed)
-        return; // context was invalidated as part of killing it
-      if (_checkOffscreen(range))
-        return;
-
-      self.context = null;
-      render(self);
-    });
+    if (range.chunk !== self) // XXXXXXXXXXXXXXXXXXX
+      killContext(range);
+    range.chunk = self;
   };
 
   // Convert an event map from the developer into an internal
