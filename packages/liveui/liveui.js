@@ -119,7 +119,7 @@ Meteor.ui = Meteor.ui || {};
 
     var html;
     try {
-      html = chunk.calculate();
+      html = calculate(chunk);
     } finally {
       Meteor.ui._render_mode = null;
     }
@@ -148,6 +148,15 @@ Meteor.ui = Meteor.ui || {};
     });
 
     return frag;
+  };
+
+  var calculate = function(chunk) {
+    var cx = new Meteor.deps.Context;
+    chunk.context = cx;
+    var html = cx.run(chunk.html_func);
+    if (typeof html !== "string")
+      throw new Error("Render function must return a string");
+    return html;
   };
 
   // In render mode (i.e. inside Meteor.ui.render), this is an
@@ -180,12 +189,9 @@ Meteor.ui = Meteor.ui || {};
       return html_func();
 
     var c = new Chunk(html_func, react_data);
-    var html = c.calculate();
+    var html = calculate(c);
 
-    return Meteor.ui._ranged_html(html, function(range) {
-      c.range = range;
-      c.wireUp();
-    });
+    return Meteor.ui._ranged_html(html, c);
   };
 
 //  var chunkInternal = function(html_func, react_data) {
@@ -410,15 +416,6 @@ Meteor.ui = Meteor.ui || {};
     this.react_data = react_data;
   };
 
-  Chunk.prototype.calculate = function() {
-    var cx = new Meteor.deps.Context;
-    this.context = cx;
-    var html = cx.run(this.html_func);
-    if (typeof html !== "string")
-      throw new Error("Render function must return a string");
-    return html;
-  };
-
   // called when we get a range, or contents are replaced
   Chunk.prototype.wireUp = function() {
     var self = this;
@@ -574,20 +571,23 @@ Meteor.ui = Meteor.ui || {};
     };
   };
 
-  Meteor.ui._ranged_html = function(html, callback) {
+  Meteor.ui._ranged_html = function(html, chunk) {
     if (! Meteor.ui._render_mode)
       return html;
 
     var idToChunk = Meteor.ui._render_mode.idToChunk;
     var commentId = Meteor.ui._render_mode.nextId ++;
 
-    // XXX
-    if (callback) {
-      idToChunk[commentId] = {
-        wireUp: function() {
-          callback(this.range);
-        }
-      };
+    if (chunk) {
+      if (typeof chunk === "function") { // XXX
+        var callback = chunk;
+        chunk = {
+          wireUp: function() {
+            callback(this.range);
+          }
+        };
+      }
+      idToChunk[commentId] = chunk;
     }
 
     return "<!-- STARTRANGE_"+commentId+" -->" + html +
