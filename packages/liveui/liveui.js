@@ -19,7 +19,7 @@ Meteor.ui = Meteor.ui || {};
 
     // walk comments and create ranges
     var rangeStartNodes = {};
-    var chunksToWireUp = [];
+    var chunksToWire = [];
     each_comment(frag, function(n) {
 
       var rangeCommentMatch = /^\s*(START|END)RANGE_(\S+)/.exec(n.nodeValue);
@@ -98,13 +98,13 @@ Meteor.ui = Meteor.ui || {};
       var chunk = idToChunk[id];
       if (chunk) {
         chunk.range = range;
-        chunksToWireUp.push(chunk);
+        chunksToWire.push(chunk);
       }
 
       return next;
     });
 
-    return chunksToWireUp;
+    return chunksToWire;
   };
 
   var render = function(chunk) {
@@ -129,7 +129,7 @@ Meteor.ui = Meteor.ui || {};
       frag.appendChild(document.createComment("empty"));
 
 
-    var chunksToWireUp = walkRanges(frag, html, idToChunk);
+    var chunksToWire = walkRanges(frag, html, idToChunk);
 
     var range = chunk.range;
     if (range) {
@@ -140,11 +140,17 @@ Meteor.ui = Meteor.ui || {};
       chunk.range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
     }
 
-    chunk.wireUp();
+    // wire up chunk and all sub-chunks
+    wireChunk(chunk);
+    _.each(chunksToWire, function(c) {
+      wireChunk(c);
+    });
 
-    // Call "added to DOM" callbacks to wire up all sub-chunks.
-    _.each(chunksToWireUp, function(c) {
-      c.wireUp();
+    // fire notification on chunk and all sub-chunks,
+    // now that chunk hierarchy is established.
+    chunk.onlive();
+    _.each(chunksToWire, function(c) {
+      c.onlive();
     });
 
     return frag;
@@ -228,6 +234,15 @@ Meteor.ui = Meteor.ui || {};
       return inner_html;
     }
 
+    /*var c = new Chunk(null, null);
+    c.onlive = function() {
+      this.chunkList = this.childChunks();
+    };
+
+    c.onsignal = function() {
+
+    };*/
+
     return Meteor.ui._ranged_html(inner_html, function(outer_range) {
       var range_list = [];
       // find immediate sub-ranges of range, and add to range_list
@@ -248,8 +263,8 @@ Meteor.ui = Meteor.ui || {};
   var killContext = function(range) {
     if (range.chunk) {
       range.chunk.kill();
-      return;
     }
+    // XXXXX
     var cx = range.context;
     if (cx && ! cx.killed) {
       cx.killed = true;
@@ -409,6 +424,15 @@ Meteor.ui = Meteor.ui || {};
     attach_secondary_events(tgtRange);
   };
 
+  var wireChunk = function(chunk) {
+    // chunk.range has been set.
+    var range = chunk.range;
+    if (range.chunk !== chunk) // XXXXXXXXXXXXXXXXXXX
+      killContext(range);
+    range.chunk = chunk;
+    chunk.onlive();
+  };
+
   var Chunk = function(html_func, react_data) {
     var self = this;
     self.html_func = html_func;
@@ -453,7 +477,7 @@ Meteor.ui = Meteor.ui || {};
   Chunk.prototype.onkill = function() {};
 
   // called when we get a range, or contents are replaced
-  Chunk.prototype.wireUp = function() {
+  Chunk.prototype.onlive = function() {
     var self = this;
 
     var range = self.range;
@@ -466,13 +490,23 @@ Meteor.ui = Meteor.ui || {};
       range.event_data = data.event_data;
 
     attach_events(range);
+  };
 
-    // record that if we see this range offscreen during a flush,
-    // we are to kill the context (mark it killed and invalidate it).
-    // Kill old context from previous update.
-    if (range.chunk !== self) // XXXXXXXXXXXXXXXXXXX
-      killContext(range);
-    range.chunk = self;
+  Chunk.prototype.childChunks = function() {
+    if (! this.range)
+      throw new Error("Chunk not rendered yet");
+
+    var chunks = [];
+    this.range.visit(function(is_start, r) {
+      if (! is_start)
+        return false;
+      if (! r.chunk)
+        return true; // allow for intervening LiveRanges
+      chunks.push(r.chunk);
+      return false;
+    });
+
+    return chunks;
   };
 
   // Convert an event map from the developer into an internal
@@ -608,9 +642,10 @@ Meteor.ui = Meteor.ui || {};
       if (typeof chunk === "function") { // XXX
         var callback = chunk;
         chunk = {
-          wireUp: function() {
+          onlive: function() {
             callback(this.range);
-          }
+          },
+          kill: function() {}
         };
       }
       idToChunk[commentId] = chunk;
