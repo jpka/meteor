@@ -192,10 +192,6 @@ Meteor.ui = Meteor.ui || {};
     return Meteor.ui._ranged_html(html, c);
   };
 
-//  var chunkInternal = function(html_func, react_data) {
-//
-//  };
-
   Meteor.ui.listChunk = function (observable, doc_func, else_func, react_data) {
     if (arguments.length === 3 && typeof else_func === "object") {
       // support (observable, doc_func, react_data) form
@@ -422,7 +418,14 @@ Meteor.ui = Meteor.ui || {};
     // When self.context is invalidated, recreate it
     // and call self.onsignal().
     var signaled = function() {
-      if (! self.killed) {
+      if ((! self.killed) &&
+          ((! self.range) || _checkOffscreen(self.range)))
+        self.killed = true;
+      if (self.killed) {
+        self.context.invalidate();
+        self.context = null;
+        self.onkill();
+      } else {
         self.context = new Meteor.deps.Context;
         self.context.on_invalidate(signaled);
         self.onsignal();
@@ -444,13 +447,10 @@ Meteor.ui = Meteor.ui || {};
   };
 
   Chunk.prototype.onsignal = function() {
-    if (_checkOffscreen(this.range)) {
-      this.kill();
-      return;
-    }
-
     render(this);
   };
+
+  Chunk.prototype.onkill = function() {};
 
   // called when we get a range, or contents are replaced
   Chunk.prototype.wireUp = function() {
