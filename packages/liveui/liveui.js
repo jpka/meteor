@@ -2,6 +2,7 @@ Meteor.ui = Meteor.ui || {};
 
 //// not all chunks have html_func??
 //// changing event_data: .data, or method?
+//// move event_data et al. off of range, onto chunk
 
 (function() {
 
@@ -342,19 +343,6 @@ Meteor.ui = Meteor.ui || {};
   };
 
 
-  var killContext = function(range) {
-    if (range.chunk) {
-      range.chunk.kill();
-    }
-    // XXXXX
-    var cx = range.context;
-    if (cx && ! cx.killed) {
-      cx.killed = true;
-      cx.invalidate && cx.invalidate();
-      delete range.context;
-    }
-  };
-
   Meteor.ui._tag = "_liveui";
 
   var _checkOffscreen = function(range) {
@@ -493,10 +481,7 @@ Meteor.ui = Meteor.ui || {};
 
   var wireChunk = function(chunk) {
     // chunk.range has been set.
-    var range = chunk.range;
-    if (range.chunk !== chunk) // XXXXXXXXXXXXXXXXXXX
-      killContext(range);
-    range.chunk = chunk;
+    chunk.range.chunk = chunk;
   };
 
   var Chunk = function(html_func, react_data) {
@@ -607,96 +592,6 @@ Meteor.ui = Meteor.ui || {};
     return handlers;
   };
 
-  Meteor.ui._wire_up_list =
-    function(outer_range, range_list, receiver, handle_to_stop,
-             doc_func, else_func, react_data)
-  {
-    react_data = react_data || {};
-
-    outer_range.context = new Meteor.deps.Context;
-    outer_range.context.run(function() {
-      receiver.depend();
-    });
-    outer_range.context.on_invalidate(function update(old_cx) {
-      if (old_cx.killed || _checkOffscreen(outer_range)) {
-        if (handle_to_stop)
-          handle_to_stop.stop();
-        return;
-      }
-
-      receiver.flush_to(callbacks);
-
-      Meteor.ui._wire_up_list(outer_range, range_list, receiver,
-                              handle_to_stop, doc_func, else_func,
-                              react_data);
-    });
-
-    var renderItem = function(doc, in_range) {
-      return Meteor.ui.render(
-          _.bind(doc_func, null, doc),
-        _.extend({}, react_data, {event_data: doc}),
-        in_range);
-    };
-
-    var renderElse = function() {
-      return Meteor.ui.render(else_func, react_data);
-    };
-
-    var callbacks = {
-      added: function(doc, before_idx) {
-        var frag = renderItem(doc);
-        var range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
-        if (range_list.length === 0)
-          cleanup_frag(outer_range.replace_contents(frag));
-        else if (before_idx === range_list.length)
-          range_list[range_list.length-1].insert_after(frag);
-        else
-          range_list[before_idx].insert_before(frag);
-
-        attach_secondary_events(range);
-
-        range_list.splice(before_idx, 0, range);
-      },
-      removed: function(doc, at_idx) {
-        if (range_list.length === 1) {
-          cleanup_frag(
-            outer_range.replace_contents(renderElse()));
-          attach_secondary_events(outer_range);
-        } else {
-          cleanup_frag(range_list[at_idx].extract());
-        }
-
-        range_list.splice(at_idx, 1);
-      },
-      moved: function(doc, old_idx, new_idx) {
-        if (old_idx === new_idx)
-          return;
-
-        var range = range_list[old_idx];
-        // We know the list has at least two items,
-        // at old_idx and new_idx, so `extract` will succeed.
-        var frag = range.extract(true);
-        range_list.splice(old_idx, 1);
-
-        if (new_idx === range_list.length)
-          range_list[range_list.length-1].insert_after(frag);
-        else
-          range_list[new_idx].insert_before(frag);
-        range_list.splice(new_idx, 0, range);
-      },
-      changed: function(doc, at_idx) {
-        var range = range_list[at_idx];
-
-        // replace the render in the immediately nested range
-        range.visit(function(is_start, r) {
-          if (is_start)
-            renderItem(doc, r);
-          return false;
-        });
-      }
-    };
-  };
-
   Meteor.ui._ranged_html = function(html, chunk) {
     if (! Meteor.ui._render_mode)
       return html;
@@ -704,18 +599,8 @@ Meteor.ui = Meteor.ui || {};
     var idToChunk = Meteor.ui._render_mode.idToChunk;
     var commentId = Meteor.ui._render_mode.nextId ++;
 
-    if (chunk) {
-      if (typeof chunk === "function") { // XXX
-        var callback = chunk;
-        chunk = {
-          onlive: function() {
-            callback(this.range);
-          },
-          kill: function() {}
-        };
-      }
+    if (chunk)
       idToChunk[commentId] = chunk;
-    }
 
     return "<!-- STARTRANGE_"+commentId+" -->" + html +
       "<!-- ENDRANGE_"+commentId+" -->";
@@ -726,6 +611,7 @@ Meteor.ui = Meteor.ui || {};
     cleanup_range(new Meteor.ui._LiveRange(Meteor.ui._tag, frag));
   };
 
+  // XXX rewrite comment
   // Cleans up a range and its descendant ranges by calling
   // killContext on them (which removes any associated context
   // from dependency tracking) and then destroy (which removes
@@ -733,7 +619,7 @@ Meteor.ui = Meteor.ui || {};
   var cleanup_range = function(range) {
     range.visit(function(is_start, range) {
       if (is_start)
-        killContext(range);
+        range.chunk && range.chunk.kill();
     });
     range.destroy(true);
   };
