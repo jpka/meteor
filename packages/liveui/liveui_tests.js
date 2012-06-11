@@ -1035,6 +1035,7 @@ Tinytest.add("liveui - listChunk event_data", function(test) {
           observer.added({_id: '3', name: 'Baz'}, 2);
           observer.added({_id: '4', name: 'Qux'}, 3);
         };
+        return { stop: function() {} };
       }},
       function(doc) {
         R.get(); // depend on R
