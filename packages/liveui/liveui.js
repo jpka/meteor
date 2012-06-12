@@ -2,6 +2,7 @@ Meteor.ui = Meteor.ui || {};
 
 //// not all chunks have html_func??
 //// ranged_html -> chunk
+//// merge replace_contents and intelligent_replace, unify cleanup and secondary events?
 
 (function() {
 
@@ -631,7 +632,7 @@ Meteor.ui = Meteor.ui || {};
     for(var r = range; r; r = r.findParent()) {
       if (r === range)
         continue;
-      var handlers = range.chunk && range.chunk.event_handlers;
+      var handlers = r.chunk && r.chunk.event_handlers;
       if (! handlers)
         continue;
 
