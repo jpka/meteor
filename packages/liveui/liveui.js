@@ -539,6 +539,27 @@ Meteor.ui = Meteor.ui || {};
     return chunks;
   };
 
+  Chunk.prototype.parentChunk = function() {
+    if (! this.range)
+      throw new Error("Chunk not rendered yet");
+
+    for(var r = this.range.findParent(); r; r = r.findParent())
+      if (r.chunk)
+        return r.chunk;
+
+    return null;
+  };
+
+  Meteor.ui._findChunk = function(node) {
+    var range = Meteor.ui._LiveRange.findRange(Meteor.ui._tag, node);
+
+    for(var r = range; r; r = r.findParent())
+      if (r.chunk)
+        return r.chunk;
+
+    return null;
+  };
+
   // Convert an event map from the developer into an internal
   // format for range.event_handlers.  The internal format is
   // an array of objects with properties {type, selector, callback}.
@@ -629,9 +650,7 @@ Meteor.ui = Meteor.ui || {};
     // Implementations of LiveEvents that use whole-document event capture
     // (all except old IE) don't actually need any of this; this function
     // could be a no-op.
-    for(var r = range; r; r = r.findParent()) {
-      if (r === range)
-        continue;
+    for(var r = range.findParent(); r; r = r.findParent()) {
       var handlers = r.chunk && r.chunk.event_handlers;
       if (! handlers)
         continue;
@@ -657,14 +676,12 @@ Meteor.ui = Meteor.ui || {};
     if (! curNode)
       return;
 
-    var innerRange = Meteor.ui._LiveRange.findRange(Meteor.ui._tag, curNode);
-    if (! innerRange)
-      return;
+    var innerChunk = Meteor.ui._findChunk(curNode);
 
     var type = event.type;
 
-    for(var range = innerRange; range; range = range.findParent()) {
-      var event_handlers = range.chunk && range.chunk.event_handlers;
+    for(var chunk = innerChunk; chunk; chunk = chunk.parentChunk()) {
+      var event_handlers = chunk.event_handlers;
       if (! event_handlers)
         continue;
 
@@ -676,7 +693,7 @@ Meteor.ui = Meteor.ui || {};
 
         var selector = h.selector;
         if (selector) {
-          var contextNode = range.containerNode();
+          var contextNode = chunk.range.containerNode();
           var results = $(contextNode).find(selector);
           if (! _.contains(results, curNode))
             continue;
@@ -706,10 +723,9 @@ Meteor.ui = Meteor.ui || {};
 
   // find the innermost enclosing liverange that has event data
   var findEventData = function(node) {
-    var innerRange = Meteor.ui._LiveRange.findRange(Meteor.ui._tag, node);
+    var innerChunk = Meteor.ui._findChunk(node);
 
-    for(var range = innerRange; range; range = range.findParent()) {
-      var chunk = range.chunk;
+    for(var chunk = innerChunk; chunk; chunk = chunk.parentChunk()) {
       var data = chunk && chunk.data;
       if (! data)
         continue;
