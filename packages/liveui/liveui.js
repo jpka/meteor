@@ -2,6 +2,7 @@ Meteor.ui = Meteor.ui || {};
 
 //// not all chunks have html_func??
 //// changing event_data: .data, or method?
+//// ranged_html -> chunk
 
 (function() {
 
@@ -241,13 +242,13 @@ Meteor.ui = Meteor.ui || {};
       // chunkList is list of current document chunks.  It doesn't
       // include the "else" chunk on 0 items.
       this.chunkList = (initialDocs.length ? this.childChunks() : []);
-      // signal this chunk when it needs to be updated
+      // update this chunk when a data callback happens
       receiver.oncallback = function () {
-        c.signal();
+        c.update();
       };
     };
 
-    c.onsignal = function() {
+    c.onupdate = function() {
       receiver.flush_to(callbacks);
     };
 
@@ -320,7 +321,7 @@ Meteor.ui = Meteor.ui || {};
         // XXX .data?
         chunk.doc = doc;
         chunk.event_data = doc;
-        chunk.signal();
+        chunk.update();
       }
     };
 
@@ -478,8 +479,8 @@ Meteor.ui = Meteor.ui || {};
 
     // Meteor.deps integration.
     // When self._context is invalidated, recreate it
-    // and call self.onsignal().
-    var signaled = function() {
+    // and call self.onupdate().
+    var updated = function() {
       if ((! self.killed) &&
           ((! self.range) || _checkOffscreen(self.range)))
         self.killed = true;
@@ -489,26 +490,26 @@ Meteor.ui = Meteor.ui || {};
         self.onkill();
       } else {
         self._context = new Meteor.deps.Context;
-        self._context.on_invalidate(signaled);
-        self.onsignal();
+        self._context.on_invalidate(updated);
+        self.onupdate();
       }
     };
     self._context = new Meteor.deps.Context;
-    self._context.on_invalidate(signaled);
+    self._context.on_invalidate(updated);
   };
 
   Chunk.prototype.kill = function() {
     if (! this.killed) {
       this.killed = true;
-      this.signal();
+      this.update();
     }
   };
 
-  Chunk.prototype.signal = function() {
+  Chunk.prototype.update = function() {
     this._context.invalidate();
   };
 
-  Chunk.prototype.onsignal = function() {
+  Chunk.prototype.onupdate = function() {
     render(this);
   };
 
