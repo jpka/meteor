@@ -191,6 +191,12 @@ Meteor.ui = Meteor.ui || {};
     return Meteor.ui._ranged_html(html, c);
   };
 
+  var destroyChunk = function(chunk) {
+    var range = chunk.range;
+    range.extract();
+    chunk.kill();
+  };
+
   Meteor.ui.listChunk = function (observable, doc_func, else_func, options) {
     if (arguments.length === 3 && typeof else_func === "object") {
       // support (observable, doc_func, options) arguments
@@ -239,9 +245,12 @@ Meteor.ui = Meteor.ui || {};
     c.onlive = function() {
       Chunk.prototype.onlive.call(c); // XXX ??
 
-      // chunkList is list of current document chunks.  It doesn't
-      // include the "else" chunk on 0 items.
-      this.chunkList = (initialDocs.length ? this.childChunks() : []);
+      // chunkList is list of current document chunks.
+      this.chunkList = this.childChunks();
+      if (! initialDocs.length)
+        // else chunk
+        this.chunkList.elseChunk = this.chunkList.pop();
+
       // update this chunk when a data callback happens
       receiver.oncallback = function () {
         c.update();
@@ -264,7 +273,9 @@ Meteor.ui = Meteor.ui || {};
         var chunkList = c.chunkList;
         if (c.chunkList.length === 0) {
           // else case -> one item
-          cleanup_frag(c.range.replace_contents(frag));
+          chunkList.elseChunk.kill();
+          chunkList.elseChunk = null;
+          c.range.replace_contents(frag);
         } else if (before_idx === chunkList.length) {
           // new item at end
           chunkList[chunkList.length - 1].range.insert_after(frag);
@@ -281,14 +292,15 @@ Meteor.ui = Meteor.ui || {};
         var chunkList = c.chunkList;
         if (chunkList.length === 1) {
           // one item -> else case
+          chunkList[0].kill();
           var elseChunk = new Chunk(else_func);
+          chunkList.elseChunk = elseChunk;
           var frag = render(elseChunk);
-          cleanup_frag(
-            c.range.replace_contents(frag));
+          c.range.replace_contents(frag);
           attach_secondary_events(elseChunk.range);
         } else {
           // remove item
-          cleanup_frag(chunkList[at_idx].range.extract());
+          destroyChunk(chunkList[at_idx]);
         }
 
         chunkList.splice(at_idx, 1);
