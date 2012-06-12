@@ -22,7 +22,7 @@ Meteor.ui = Meteor.ui || {};
 
     // walk comments and create ranges
     var rangeStartNodes = {};
-    var chunksToWire = [];
+    var liveChunks = [];
     each_comment(frag, function(n) {
 
       var rangeCommentMatch = /^\s*(START|END)RANGE_(\S+)/.exec(n.nodeValue);
@@ -101,13 +101,14 @@ Meteor.ui = Meteor.ui || {};
       var chunk = idToChunk[id];
       if (chunk) {
         chunk.range = range;
-        chunksToWire.push(chunk);
+        range.chunk = chunk;
+        liveChunks.push(chunk);
       }
 
       return next;
     });
 
-    return chunksToWire;
+    return liveChunks;
   };
 
   var render = function(chunk) {
@@ -129,7 +130,7 @@ Meteor.ui = Meteor.ui || {};
       frag.appendChild(document.createComment("empty"));
 
 
-    var chunksToWire = walkRanges(frag, html, idToChunk);
+    var liveChunks = walkRanges(frag, html, idToChunk);
 
     var range = chunk.range;
     if (range) {
@@ -138,18 +139,13 @@ Meteor.ui = Meteor.ui || {};
       frag = null;
     } else {
       chunk.range = new Meteor.ui._LiveRange(Meteor.ui._tag, frag);
+      chunk.range.chunk = chunk;
     }
-
-    // wire up chunk and all sub-chunks
-    wireChunk(chunk);
-    _.each(chunksToWire, function(c) {
-      wireChunk(c);
-    });
 
     // fire notification on chunk and all sub-chunks,
     // now that chunk hierarchy is established.
     chunk.onlive();
-    _.each(chunksToWire, function(c) {
+    _.each(liveChunks, function(c) {
       c.onlive();
     });
 
@@ -466,11 +462,6 @@ Meteor.ui = Meteor.ui || {};
     });
 
     attach_secondary_events(tgtRange);
-  };
-
-  var wireChunk = function(chunk) {
-    // chunk.range has been set.
-    chunk.range.chunk = chunk;
   };
 
   var Chunk = function(html_func, options) {
