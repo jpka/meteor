@@ -173,7 +173,7 @@ Meteor.ui = Meteor.ui || {};
   // callbacks: id -> func, where id ranges from 1 to callbacks._count.
   Meteor.ui._render_mode = null;
 
-  Meteor.ui.render = function (html_func, react_data, xxx_in_range) {
+  Meteor.ui.render = function (html_func, react_data) {
     if (typeof html_func !== "function")
       throw new Error("Meteor.ui.render() requires a function as its first argument.");
 
@@ -181,11 +181,6 @@ Meteor.ui = Meteor.ui || {};
       throw new Error("Can't nest Meteor.ui.render.");
 
     var c = new Chunk(html_func, react_data);
-    if (xxx_in_range) {
-      c.range = xxx_in_range;
-      render(c);
-      return null;
-    }
 
     return render(c);
   };
