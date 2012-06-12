@@ -161,7 +161,7 @@ Meteor.ui = Meteor.ui || {};
   };
 
   var calculate = function(chunk) {
-    var html = chunk.context.run(chunk.html_func);
+    var html = chunk._context.run(chunk.html_func);
 
     if (typeof html !== "string")
       throw new Error("Render function must return a string");
@@ -490,24 +490,24 @@ Meteor.ui = Meteor.ui || {};
     self.react_data = react_data;
 
     // Meteor.deps integration.
-    // When self.context is invalidated, recreate it
+    // When self._context is invalidated, recreate it
     // and call self.onsignal().
     var signaled = function() {
       if ((! self.killed) &&
           ((! self.range) || _checkOffscreen(self.range)))
         self.killed = true;
       if (self.killed) {
-        self.context.invalidate();
-        self.context = null;
+        self._context.invalidate();
+        self._context = null;
         self.onkill();
       } else {
-        self.context = new Meteor.deps.Context;
-        self.context.on_invalidate(signaled);
+        self._context = new Meteor.deps.Context;
+        self._context.on_invalidate(signaled);
         self.onsignal();
       }
     };
-    self.context = new Meteor.deps.Context;
-    self.context.on_invalidate(signaled);
+    self._context = new Meteor.deps.Context;
+    self._context.on_invalidate(signaled);
   };
 
   Chunk.prototype.kill = function() {
@@ -518,7 +518,7 @@ Meteor.ui = Meteor.ui || {};
   };
 
   Chunk.prototype.signal = function() {
-    this.context.invalidate();
+    this._context.invalidate();
   };
 
   Chunk.prototype.onsignal = function() {
