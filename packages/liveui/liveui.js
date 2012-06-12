@@ -1,7 +1,6 @@
 Meteor.ui = Meteor.ui || {};
 
 //// not all chunks have html_func??
-//// changing event_data: .data, or method?
 //// ranged_html -> chunk
 
 (function() {
@@ -212,7 +211,7 @@ Meteor.ui = Meteor.ui || {};
     var docChunk = function(doc) {
       var chunk = new Chunk(function () {
         return doc_func(chunk.doc);
-      }, {event_data: doc});
+      }, {data: function() { return chunk.doc; }});
       chunk.doc = doc;
       return chunk;
     };
@@ -318,9 +317,7 @@ Meteor.ui = Meteor.ui || {};
       },
       changed: function(doc, at_idx) {
         var chunk = c.chunkList[at_idx];
-        // XXX .data?
         chunk.doc = doc;
-        chunk.event_data = doc;
         chunk.update();
       }
     };
@@ -470,8 +467,12 @@ Meteor.ui = Meteor.ui || {};
     self.html_func = html_func;
 
     if (options) {
+      if (options.data)
+        self.data = options.data;
+
+      // backwards compatibility: event_data -> data
       if (options.event_data)
-        self.event_data = options.event_data;
+        self.data = options.event_data;
 
       if (options.events)
         self.event_handlers = unpackEventMap(options.events);
@@ -702,13 +703,19 @@ Meteor.ui = Meteor.ui || {};
 
   };
 
-  // find the innermost enclosing liverange that has event_data
+  // find the innermost enclosing liverange that has event data
   var findEventData = function(node) {
     var innerRange = Meteor.ui._LiveRange.findRange(Meteor.ui._tag, node);
 
-    for(var range = innerRange; range; range = range.findParent())
-      if (range.chunk && range.chunk.event_data)
-        return range.chunk.event_data;
+    for(var range = innerRange; range; range = range.findParent()) {
+      var chunk = range.chunk;
+      var data = chunk && chunk.data;
+      if (! data)
+        continue;
+      if (typeof data === "function")
+        return data.call(chunk);
+      return data;
+    }
 
     return null;
   };
