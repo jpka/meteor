@@ -2,7 +2,6 @@ Meteor.ui = Meteor.ui || {};
 
 //// not all chunks have html_func??
 //// changing event_data: .data, or method?
-//// move event_data et al. off of range, onto chunk
 
 (function() {
 
@@ -112,9 +111,6 @@ Meteor.ui = Meteor.ui || {};
   };
 
   var render = function(chunk) {
-    var html_func = chunk.html_func;
-    var react_data = chunk.react_data;
-
     var idToChunk = {};
     Meteor.ui._render_mode = {
       nextId: 1,
@@ -173,35 +169,35 @@ Meteor.ui = Meteor.ui || {};
   // callbacks: id -> func, where id ranges from 1 to callbacks._count.
   Meteor.ui._render_mode = null;
 
-  Meteor.ui.render = function (html_func, react_data) {
+  Meteor.ui.render = function (html_func, options) {
     if (typeof html_func !== "function")
       throw new Error("Meteor.ui.render() requires a function as its first argument.");
 
     if (Meteor.ui._render_mode)
       throw new Error("Can't nest Meteor.ui.render.");
 
-    var c = new Chunk(html_func, react_data);
+    var c = new Chunk(html_func, options);
 
     return render(c);
   };
 
-  Meteor.ui.chunk = function(html_func, react_data) {
+  Meteor.ui.chunk = function(html_func, options) {
     if (typeof html_func !== "function")
       throw new Error("Meteor.ui.chunk() requires a function as its first argument.");
 
     if (! Meteor.ui._render_mode)
       return html_func();
 
-    var c = new Chunk(html_func, react_data);
+    var c = new Chunk(html_func, options);
     var html = calculate(c);
 
     return Meteor.ui._ranged_html(html, c);
   };
 
-  Meteor.ui.listChunk = function (observable, doc_func, else_func, react_data) {
+  Meteor.ui.listChunk = function (observable, doc_func, else_func, options) {
     if (arguments.length === 3 && typeof else_func === "object") {
-      // support (observable, doc_func, react_data) form
-      react_data = else_func;
+      // support (observable, doc_func, options) arguments
+      options = else_func;
       else_func = null;
     }
 
@@ -209,7 +205,6 @@ Meteor.ui = Meteor.ui || {};
       throw new Error("Meteor.ui.listChunk() requires a function as first argument");
     else_func = (typeof else_func === "function" ? else_func :
                  function() { return ""; });
-    react_data = react_data || {};
 
     var initialDocs = [];
     var receiver = new Meteor.ui._CallbackReceiver();
@@ -243,7 +238,7 @@ Meteor.ui = Meteor.ui || {};
 
     // Reactive case
 
-    var c = new Chunk(null, react_data);
+    var c = new Chunk(null, options);
     c.onlive = function() {
       Chunk.prototype.onlive.call(c); // XXX ??
 
@@ -289,7 +284,7 @@ Meteor.ui = Meteor.ui || {};
         var chunkList = c.chunkList;
         if (chunkList.length === 1) {
           // one item -> else case
-          var elseChunk = new Chunk(else_func, null);
+          var elseChunk = new Chunk(else_func);
           var frag = render(elseChunk);
           cleanup_frag(
             c.range.replace_contents(frag));
@@ -328,8 +323,7 @@ Meteor.ui = Meteor.ui || {};
         var chunk = c.chunkList[at_idx];
         // XXX .data?
         chunk.doc = doc;
-        chunk.react_data.event_data = doc;
-        chunk.range.event_data = doc;
+        chunk.event_data = doc;
         chunk.signal();
       }
     };
@@ -479,10 +473,17 @@ Meteor.ui = Meteor.ui || {};
     chunk.range.chunk = chunk;
   };
 
-  var Chunk = function(html_func, react_data) {
+  var Chunk = function(html_func, options) {
     var self = this;
     self.html_func = html_func;
-    self.react_data = react_data;
+
+    if (options) {
+      if (options.event_data)
+        self.event_data = options.event_data;
+
+      if (options.events)
+        self.event_handlers = unpackEventMap(options.events);
+    }
 
     // Meteor.deps integration.
     // When self._context is invalidated, recreate it
@@ -524,18 +525,7 @@ Meteor.ui = Meteor.ui || {};
 
   // called when we get a range, or contents are replaced
   Chunk.prototype.onlive = function() {
-    var self = this;
-
-    var range = self.range;
-
-    // wire events
-    var data = self.react_data || {};
-    if (data.events)
-      range.event_handlers = unpackEventMap(data.events);
-    if (data.event_data)
-      range.event_data = data.event_data;
-
-    attach_events(range);
+    attach_events(this.range);
   };
 
   Chunk.prototype.childChunks = function() {
@@ -622,10 +612,11 @@ Meteor.ui = Meteor.ui || {};
   // Attach events specified by `range` to top-level nodes in `range`.
   // The nodes may still be in a DocumentFragment.
   var attach_events = function(range) {
-    if (! range.event_handlers)
+    var handlers = range.chunk && range.chunk.event_handlers;
+    if (! handlers)
       return;
 
-    _.each(range.event_handlers.types, function(t) {
+    _.each(handlers.types, function(t) {
       for(var n = range.firstNode(), after = range.lastNode().nextSibling;
           n && n !== after;
           n = n.nextSibling)
@@ -647,10 +638,11 @@ Meteor.ui = Meteor.ui || {};
     for(var r = range; r; r = r.findParent()) {
       if (r === range)
         continue;
-      if (! r.event_handlers)
+      var handlers = range.chunk && range.chunk.event_handlers;
+      if (! handlers)
         continue;
 
-      var eventTypes = r.event_handlers.types;
+      var eventTypes = handlers.types;
       _.each(eventTypes, function(t) {
         for(var n = range.firstNode(), after = range.lastNode().nextSibling;
             n && n !== after;
@@ -678,7 +670,7 @@ Meteor.ui = Meteor.ui || {};
     var type = event.type;
 
     for(var range = innerRange; range; range = range.findParent()) {
-      var event_handlers = range.event_handlers;
+      var event_handlers = range.chunk && range.chunk.event_handlers;
       if (! event_handlers)
         continue;
 
@@ -723,8 +715,8 @@ Meteor.ui = Meteor.ui || {};
     var innerRange = Meteor.ui._LiveRange.findRange(Meteor.ui._tag, node);
 
     for(var range = innerRange; range; range = range.findParent())
-      if (range.event_data)
-        return range.event_data;
+      if (range.chunk && range.chunk.event_data)
+        return range.chunk.event_data;
 
     return null;
   };
