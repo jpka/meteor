@@ -3,6 +3,7 @@ Meteor.ui = Meteor.ui || {};
 //// not all chunks have html_func??
 //// ranged_html -> chunk
 //// merge replace_contents and intelligent_replace, unify cleanup and secondary events?
+//// callbacks processed inside onupdate
 
 (function() {
 
@@ -130,7 +131,6 @@ Meteor.ui = Meteor.ui || {};
     if (! frag.firstChild)
       frag.appendChild(document.createComment("empty"));
 
-
     var liveChunks = walkRanges(frag, html, idToChunk);
 
     var range = chunk.range;
@@ -245,11 +245,14 @@ Meteor.ui = Meteor.ui || {};
     c.onlive = function() {
       Chunk.prototype.onlive.call(c); // XXX ??
 
-      // chunkList is list of current document chunks.
-      this.chunkList = this.childChunks();
-      if (! initialDocs.length)
-        // else chunk
-        this.chunkList.elseChunk = this.chunkList.pop();
+      var chunkList = this.childChunks();
+      if (initialDocs.length) {
+        this.docChunks = chunkList;
+        this.elseChunk = null;
+      } else {
+        this.docChunks = [];
+        this.elseChunk = chunkList[0];
+      }
 
       // update this chunk when a data callback happens
       receiver.oncallback = function () {
@@ -265,71 +268,68 @@ Meteor.ui = Meteor.ui || {};
       handle.stop();
     };
 
+    var insertFrag = function(frag, i) {
+      var docChunks = c.docChunks;
+      if (i === docChunks.length)
+        docChunks[i-1].range.insert_after(frag);
+      else
+        docChunks[i].range.insert_before(frag);
+    };
+
     var callbacks = {
       added: function(doc, before_idx) {
         var newChunk = docChunk(doc);
         var frag = render(newChunk);
 
-        var chunkList = c.chunkList;
-        if (c.chunkList.length === 0) {
+        if (c.elseChunk) {
           // else case -> one item
-          chunkList.elseChunk.kill();
-          chunkList.elseChunk = null;
+          c.elseChunk.kill();
+          c.elseChunk = null;
           c.range.replace_contents(frag);
-        } else if (before_idx === chunkList.length) {
-          // new item at end
-          chunkList[chunkList.length - 1].range.insert_after(frag);
         } else {
-          // new item, not at end
-          chunkList[before_idx].range.insert_before(frag);
+          insertFrag(frag, before_idx);
         }
 
         attach_secondary_events(newChunk.range);
 
-        chunkList.splice(before_idx, 0, newChunk);
+        c.docChunks.splice(before_idx, 0, newChunk);
       },
       removed: function(doc, at_idx) {
-        var chunkList = c.chunkList;
-        if (chunkList.length === 1) {
+        var docChunks = c.docChunks;
+        if (docChunks.length === 1) {
           // one item -> else case
-          chunkList[0].kill();
+          docChunks[0].kill();
           var elseChunk = new Chunk(else_func);
-          chunkList.elseChunk = elseChunk;
+          c.elseChunk = elseChunk;
           var frag = render(elseChunk);
           c.range.replace_contents(frag);
           attach_secondary_events(elseChunk.range);
         } else {
           // remove item
-          destroyChunk(chunkList[at_idx]);
+          destroyChunk(docChunks[at_idx]);
         }
 
-        chunkList.splice(at_idx, 1);
+        docChunks.splice(at_idx, 1);
       },
       moved: function(doc, old_idx, new_idx) {
         if (old_idx === new_idx)
           return;
 
-        var chunkList = c.chunkList;
-        var moveChunk = chunkList[old_idx];
+        var docChunks = c.docChunks;
+        var moveChunk = docChunks[old_idx];
         var range = moveChunk.range;
         // We know the list has at least two items,
         // at old_idx and new_idx, so `extract` will succeed.
         var frag = range.extract();
         // remove chunk from list at old index
-        chunkList.splice(old_idx, 1);
+        docChunks.splice(old_idx, 1);
 
-        if (new_idx === chunkList.length) {
-          // move to end
-          chunkList[chunkList.length-1].range.insert_after(frag);
-        } else {
-          // move, not to end
-          chunkList[new_idx].range.insert_before(frag);
-        }
+        insertFrag(frag, new_idx);
         // insert chunk into list at new index
-        chunkList.splice(new_idx, 0, moveChunk);
+        docChunks.splice(new_idx, 0, moveChunk);
       },
       changed: function(doc, at_idx) {
-        var chunk = c.chunkList[at_idx];
+        var chunk = c.docChunks[at_idx];
         chunk.doc = doc;
         chunk.update();
       }
