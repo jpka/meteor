@@ -1728,7 +1728,7 @@ testAsyncMulti(
           var iframeDiv = OnscreenDiv(
             Meteor.ui.render(function() {
               return '<iframe name="'+frameName+'" '+
-                'src="'+IFRAME_URL_1+'">';
+                'src="'+IFRAME_URL_1+'"></iframe>';
             }));
           var iframe = iframeDiv.node().firstChild;
 
