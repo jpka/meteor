@@ -2,28 +2,40 @@ Package.describe({
   summary: "Javascript template that uses HAML as markup and understands coffeescript"
 });
 
-var HamlCoffee = require('haml-coffee-meteor').Compiler;
-var CoffeeScript = require('coffee-script')
-var fs = require('fs');
+var HamlCoffee = require("haml-coffee"),
+    fs = require("fs"),
+    path = require("path");
 
 Package.register_extension(
-  "hamlc", function (bundle, source_path, serve_path, where) {
-    serve_path = serve_path + '.js';
+  "hamlc", function (bundle, sourcePath, servePath, where) {
+    if (where !== "client") return;
 
-    var contents = fs.readFileSync(source_path);
-    var compiler;
-    var compiler = new HamlCoffee();
-    var splits = source_path.split('/');
-    var template_name = splits[splits.length-1];
-    template_name = template_name.split('.')[0];
-    compiler.parse(contents.toString('utf8'));
-    contents = new Buffer("if (typeof HAML == 'undefined') {var HAML = {}}; HAML['"+template_name+"']=function(params) { return (function(){"+CoffeeScript.compile(compiler.precompile(), {bare: true})+"}).call(params) };");
+    var contents = fs.readFileSync(sourcePath).toString("utf8"),
+        templateName = path.basename(servePath, ".hamlc"),
+        type;
+
+    switch (templateName) {
+      case "body":
+      case "head":
+        type = templateName;
+        contents = HamlCoffee.compile(contents)();
+        servePath += ".html";
+        break;
+      default:
+        type = "js";
+        servePath += ".js";
+        contents = new Buffer(HamlCoffee.template(contents, templateName).replace(/window\.HAML/g, "this.Template"));
+    }    
 
     bundle.add_resource({
-      type: "js",
-      path: serve_path,
+      type: type,
+      path: servePath,
       data: contents,
       where: where
     });
   }
 );
+
+Package.on_use(function(api) {
+  //bundle.add_resourcenew Buffer("var HAML = {};"));
+});
